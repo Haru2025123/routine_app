@@ -58,9 +58,30 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, 'Hiragi
 #sendBtn { width: 38px; height: 38px; border-radius: 50%; background: #4a9c6e; color: white; border: none; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; -webkit-tap-highlight-color: transparent; }
 #imgBtn { width: 38px; height: 38px; border-radius: 50%; background: #6aabca; color: white; border: none; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; -webkit-tap-highlight-color: transparent; }
 #fileInput { display: none; }
+#apiModal { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+#apiModal.hidden { display: none; }
+.modal-box { background: white; border-radius: 20px; padding: 28px 20px; width: 100%; max-width: 340px; }
+.modal-box h2 { font-size: 18px; font-weight: 700; margin-bottom: 6px; color: #1a1a1a; }
+.modal-box p { font-size: 13px; color: #666; margin-bottom: 20px; line-height: 1.6; }
+.modal-box input { width: 100%; border: 1.5px solid #ddd; border-radius: 12px; padding: 12px 14px; font-size: 14px; outline: none; font-family: inherit; margin-bottom: 12px; }
+.modal-box input:focus { border-color: #4a9c6e; }
+.modal-box button { width: 100%; background: #4a9c6e; color: white; border: none; border-radius: 12px; padding: 14px; font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit; }
+.modal-box button:active { opacity: 0.85; }
+.modal-note { font-size: 11px; color: #bbb; text-align: center; margin-top: 10px; line-height: 1.6; }
+.modal-error { color: #e74c3c; font-size: 12px; margin-bottom: 8px; display: none; }
 </style>
 </head>
 <body>
+<div id="apiModal">
+  <div class="modal-box">
+    <h2>🔑 APIキーを設定</h2>
+    <p>Anthropic ConsoleのAPIキーを入力してください。このスマホに保存され、次回から自動で使われます。</p>
+    <div class="modal-error" id="modalError">APIキーが正しくありません。sk-ant- で始まるキーを入力してください。</div>
+    <input type="password" id="apiKeyInput" placeholder="sk-ant-..." autocomplete="off">
+    <button onclick="saveApiKey()">保存してはじめる 💪</button>
+    <div class="modal-note">キーはこのスマホのブラウザにのみ保存されます。GitHubには一切アップロードされません。</div>
+  </div>
+</div>
 <div id="app">
   <div id="header">
     <div class="avatar-group">
@@ -89,272 +110,159 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, 'Hiragi
     </div>
   </div>
 </div>
-
 <script>
-// ======== 設定 ========
-// Anthropic APIキー（後で入力してください）
-const API_KEY = 'YOUR_API_KEY_HERE';
-
+const API_KEY_STORAGE = 'routine_api_key';
+function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
+function saveApiKey() {
+  const val = document.getElementById('apiKeyInput').value.trim();
+  const errEl = document.getElementById('modalError');
+  if (!val.startsWith('sk-ant-')) { errEl.style.display = 'block'; return; }
+  errEl.style.display = 'none';
+  localStorage.setItem(API_KEY_STORAGE, val);
+  document.getElementById('apiModal').classList.add('hidden');
+  init();
+}
+function checkApiKey() {
+  if (!getApiKey()) { document.getElementById('apiModal').classList.remove('hidden'); return false; }
+  document.getElementById('apiModal').classList.add('hidden');
+  return true;
+}
 const QUICK = {
   haruka: ["家トレ完了","ジムトレ完了","体重計測完了","プロテイン飲んだ","昨夜は酒なし","スキンケア完了","有酸素完了"],
   yoichi: ["家トレ完了","ジムトレ完了","体重計測完了","プロテイン飲んだ","昨夜は酒なし","ランニング完了","ストレッチ完了"]
 };
-
 const STORAGE_KEY = 'routine_data_v1';
 const MSGS_KEY = 'routine_msgs_v1';
-
 let currentUser = 'haruka';
 let sharedData = null;
-
 function defaultData() {
   return {
     haruka: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, skincare:0, cardio:0, streaks:{protein:0,noAlcohol:0,skincare:0}, lastDates:{} },
     yoichi: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, running:0, stretch:0, streaks:{protein:0,noAlcohol:0}, lastDates:{} }
   };
 }
-
 function loadData() {
-  try {
-    const d = localStorage.getItem(STORAGE_KEY);
-    sharedData = d ? JSON.parse(d) : defaultData();
-  } catch(e) { sharedData = defaultData(); }
+  try { const d = localStorage.getItem(STORAGE_KEY); sharedData = d ? JSON.parse(d) : defaultData(); } catch(e) { sharedData = defaultData(); }
   updateStatsBar();
   document.getElementById('syncStatus').textContent = '記録中 ✓';
 }
-
-function saveData() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sharedData)); } catch(e) {}
-}
-
+function saveData() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sharedData)); } catch(e) {} }
 function loadMessages() {
   try {
     const d = localStorage.getItem(MSGS_KEY);
-    if (d) {
-      const msgs = JSON.parse(d);
-      addDivider('今日');
-      msgs.slice(-40).forEach(m => renderMsg(m));
-      document.getElementById('messages').scrollTop = 99999;
-      return true;
-    }
+    if (d) { const msgs = JSON.parse(d); addDivider('今日'); msgs.slice(-40).forEach(m => renderMsg(m)); document.getElementById('messages').scrollTop = 99999; return true; }
   } catch(e) {}
   return false;
 }
-
 function saveMsgAppend(msgObj) {
-  try {
-    let msgs = [];
-    const d = localStorage.getItem(MSGS_KEY);
-    if (d) msgs = JSON.parse(d);
-    msgs.push(msgObj);
-    if (msgs.length > 80) msgs = msgs.slice(-80);
-    localStorage.setItem(MSGS_KEY, JSON.stringify(msgs));
-  } catch(e) {}
+  try { let msgs = []; const d = localStorage.getItem(MSGS_KEY); if (d) msgs = JSON.parse(d); msgs.push(msgObj); if (msgs.length > 80) msgs = msgs.slice(-80); localStorage.setItem(MSGS_KEY, JSON.stringify(msgs)); } catch(e) {}
 }
-
-function getTime() {
-  return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
-}
-
-function addDivider(text) {
-  const box = document.getElementById('messages');
-  const d = document.createElement('div');
-  d.className = 'day-divider';
-  d.textContent = text;
-  box.appendChild(d);
-}
-
+function getTime() { return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}); }
+function addDivider(text) { const box = document.getElementById('messages'); const d = document.createElement('div'); d.className = 'day-divider'; d.textContent = text; box.appendChild(d); }
 function renderMsg(m) {
-  const box = document.getElementById('messages');
-  const row = document.createElement('div');
-  const isMe = (m.user === currentUser);
-  row.className = 'msg-row' + (isMe ? ' me' : '');
+  const box = document.getElementById('messages'); const row = document.createElement('div');
+  const isMe = (m.user === currentUser); row.className = 'msg-row' + (isMe ? ' me' : '');
   const sentClass = m.user === 'haruka' ? 'sent-h' : (m.user === 'yoichi' ? 'sent-y' : '');
   const bubbleClass = m.role === 'ai' ? 'ai-bubble' : (isMe ? sentClass : 'received');
   const avatarClass = m.role === 'ai' ? 'ai' : m.user;
   const avatarIcon = m.role === 'ai' ? 'AI' : (m.user === 'haruka' ? '🌸' : '🏋️');
   const name = m.role === 'ai' ? 'AIコーチ' : (m.user === 'haruka' ? '晴香' : '陽一');
   const imgEl = m.imgSrc ? `<img src="${m.imgSrc}" loading="lazy">` : '';
-  if (isMe) {
-    row.innerHTML = `<div class="time-stamp">${m.time}</div><div class="bubble ${bubbleClass}">${m.text}${imgEl}</div>`;
-  } else {
-    row.innerHTML = `<div class="avatar-sm ${avatarClass}">${avatarIcon}</div><div><div class="name-label">${name}</div><div class="bubble ${bubbleClass}">${m.text}${imgEl}</div></div>`;
-  }
-  box.appendChild(row);
-  box.scrollTop = box.scrollHeight;
+  if (isMe) { row.innerHTML = `<div class="time-stamp">${m.time}</div><div class="bubble ${bubbleClass}">${m.text}${imgEl}</div>`; }
+  else { row.innerHTML = `<div class="avatar-sm ${avatarClass}">${avatarIcon}</div><div><div class="name-label">${name}</div><div class="bubble ${bubbleClass}">${m.text}${imgEl}</div></div>`; }
+  box.appendChild(row); box.scrollTop = box.scrollHeight;
 }
-
-function addAndSaveMsg(msgObj) {
-  renderMsg(msgObj);
-  saveMsgAppend(msgObj);
-}
-
+function addAndSaveMsg(msgObj) { renderMsg(msgObj); saveMsgAppend(msgObj); }
 function showTyping() {
-  const box = document.getElementById('messages');
-  const d = document.createElement('div');
-  d.className = 'msg-row';
-  d.id = 'typing-indicator';
+  const box = document.getElementById('messages'); const d = document.createElement('div');
+  d.className = 'msg-row'; d.id = 'typing-indicator';
   d.innerHTML = `<div class="avatar-sm ai">AI</div><div class="bubble ai-bubble"><div class="typing"><span></span><span></span><span></span></div></div>`;
-  box.appendChild(d);
-  box.scrollTop = box.scrollHeight;
+  box.appendChild(d); box.scrollTop = box.scrollHeight;
 }
-function removeTyping() {
-  const t = document.getElementById('typing-indicator');
-  if (t) t.remove();
-}
-
+function removeTyping() { const t = document.getElementById('typing-indicator'); if (t) t.remove(); }
 function updateRecord(user, text) {
-  const r = sharedData[user];
-  const today = new Date().toDateString();
-  const yesterday = new Date(Date.now()-86400000).toDateString();
+  const r = sharedData[user]; const today = new Date().toDateString(); const yesterday = new Date(Date.now()-86400000).toDateString();
   if (text.includes('ジムトレ')) r.gym++;
   if (text.includes('家トレ')) r.homeGym++;
   if (text.includes('体重計測')) r.weight++;
-  if (text.includes('プロテイン')) {
-    r.protein++;
-    r.streaks.protein = (r.lastDates.protein === yesterday) ? (r.streaks.protein||0)+1 : 1;
-    r.lastDates.protein = today;
-  }
-  if (text.includes('酒なし') || text.includes('禁酒')) {
-    r.noAlcohol++;
-    r.streaks.noAlcohol = (r.lastDates.noAlcohol === yesterday) ? (r.streaks.noAlcohol||0)+1 : 1;
-    r.lastDates.noAlcohol = today;
-  }
-  if (text.includes('スキンケア')) {
-    r.skincare=(r.skincare||0)+1;
-    r.streaks.skincare=(r.lastDates.skincare===yesterday)?(r.streaks.skincare||0)+1:1;
-    r.lastDates.skincare=today;
-  }
+  if (text.includes('プロテイン')) { r.protein++; r.streaks.protein = (r.lastDates.protein === yesterday) ? (r.streaks.protein||0)+1 : 1; r.lastDates.protein = today; }
+  if (text.includes('酒なし') || text.includes('禁酒')) { r.noAlcohol++; r.streaks.noAlcohol = (r.lastDates.noAlcohol === yesterday) ? (r.streaks.noAlcohol||0)+1 : 1; r.lastDates.noAlcohol = today; }
+  if (text.includes('スキンケア')) { r.skincare=(r.skincare||0)+1; r.streaks.skincare=(r.lastDates.skincare===yesterday)?(r.streaks.skincare||0)+1:1; r.lastDates.skincare=today; }
   if (text.includes('有酸素') || text.includes('ランニング')) r.cardio=(r.cardio||0)+1;
   if (text.includes('ストレッチ')) r.stretch=(r.stretch||0)+1;
-  saveData();
-  updateStatsBar();
+  saveData(); updateStatsBar();
 }
-
 function updateStatsBar() {
-  if (!sharedData) return;
-  const h = sharedData.haruka, y = sharedData.yoichi;
+  if (!sharedData) return; const h = sharedData.haruka, y = sharedData.yoichi;
   document.getElementById('statsBar').innerHTML = `
     <div class="stat-chip">🌸ジム <span>${h.gym}</span>回</div>
     <div class="stat-chip">🌸禁酒 <span>${h.streaks.noAlcohol||0}</span>日連続</div>
     <div class="stat-chip">🌸プロテ <span>${h.streaks.protein||0}</span>日連続</div>
     <div class="stat-chip">🏋️ジム <span>${y.gym}</span>回</div>
-    <div class="stat-chip">🏋️禁酒 <span>${y.streaks.noAlcohol||0}</span>日連続</div>
-  `;
+    <div class="stat-chip">🏋️禁酒 <span>${y.streaks.noAlcohol||0}</span>日連続</div>`;
 }
-
 function setUser(u) {
   currentUser = u;
   document.getElementById('tabHaruka').className = 'tab'+(u==='haruka'?' active-haruka':'');
   document.getElementById('tabYoichi').className = 'tab'+(u==='yoichi'?' active-yoichi':'');
   renderQuickBtns();
 }
-
 function renderQuickBtns() {
-  document.getElementById('quickBtns').innerHTML = QUICK[currentUser].map(b =>
-    `<button class="qbtn" onclick="sendReport('${b}')">${b}</button>`).join('');
+  document.getElementById('quickBtns').innerHTML = QUICK[currentUser].map(b => `<button class="qbtn" onclick="sendReport('${b}')">${b}</button>`).join('');
 }
-
 function buildPrompt(user, text) {
-  const r = sharedData[user];
-  const name = user === 'haruka' ? '晴香' : '陽一';
+  const r = sharedData[user]; const name = user === 'haruka' ? '晴香' : '陽一';
   const ctx = user === 'haruka' ? '晴香さんはジムトレ・美容・肉体改造・禁酒に取り組む女性です。' : '陽一さんは筋トレと健康習慣に取り組んでいます。';
-  return `あなたはルーティーン管理AIコーチです。
-
-${ctx}
-累計：ジムトレ${r.gym}回、家トレ${r.homeGym}回、プロテイン${r.protein}回(連続${r.streaks?.protein||0}日)、禁酒${r.noAlcohol}日(連続${r.streaks?.noAlcohol||0}日)、体重計測${r.weight}回
-
-今回の報告：「${text}」
-
-ルール：
-- ${name}さんの名前を必ず呼ぶ
-- 毎回まったく違うユニークな比喩・ユーモアを使う（桜、ロケット、伝説の戦士、神話、宇宙、料理、動物など何でも）
-- 連続記録・累計が増えたら必ず言及
-- 3〜4文、絵文字2〜3個
-- 日本語で返答`;
+  return `あなたはルーティーン管理AIコーチです。\n\n${ctx}\n累計：ジムトレ${r.gym}回、家トレ${r.homeGym}回、プロテイン${r.protein}回(連続${r.streaks?.protein||0}日)、禁酒${r.noAlcohol}日(連続${r.streaks?.noAlcohol||0}日)、体重計測${r.weight}回\n\n今回の報告：「${text}」\n\nルール：\n- ${name}さんの名前を必ず呼ぶ\n- 毎回まったく違うユニークな比喩・ユーモアを使う\n- 連続記録・累計が増えたら必ず言及\n- 3〜4文、絵文字2〜3個\n- 日本語で返答`;
 }
-
 async function callAI(messages, imageData) {
-  const content = imageData
-    ? [{ type:"image", source:{ type:"base64", media_type: imageData.type, data: imageData.b64 }}, { type:"text", text: messages }]
-    : messages;
+  const API_KEY = getApiKey();
+  const content = imageData ? [{ type:"image", source:{ type:"base64", media_type: imageData.type, data: imageData.b64 }}, { type:"text", text: messages }] : messages;
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": API_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true"
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      messages: [{ role: "user", content }]
-    })
+    headers: { "Content-Type": "application/json", "x-api-key": API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, messages: [{ role: "user", content }] })
   });
   const data = await res.json();
   return data.content?.[0]?.text || "素晴らしい！記録したよ💪";
 }
-
 async function sendReport(text) {
-  const user = currentUser;
-  const time = getTime();
+  const user = currentUser; const time = getTime();
   addAndSaveMsg({ user, role:'user', text, time });
-  updateRecord(user, text);
-  showTyping();
-  try {
-    const reply = await callAI(buildPrompt(user, text));
-    removeTyping();
-    addAndSaveMsg({ user:'ai', role:'ai', text: reply, time: getTime() });
-  } catch(e) {
-    removeTyping();
-    addAndSaveMsg({ user:'ai', role:'ai', text:'報告ありがとう！記録したよ！💪', time: getTime() });
-  }
+  updateRecord(user, text); showTyping();
+  try { const reply = await callAI(buildPrompt(user, text)); removeTyping(); addAndSaveMsg({ user:'ai', role:'ai', text: reply, time: getTime() }); }
+  catch(e) { removeTyping(); addAndSaveMsg({ user:'ai', role:'ai', text:'報告ありがとう！記録したよ！💪', time: getTime() }); }
 }
-
 async function sendMessage() {
-  const input = document.getElementById('textInput');
-  const text = input.value.trim();
-  if (!text) return;
-  input.value = '';
-  await sendReport(text);
+  const input = document.getElementById('textInput'); const text = input.value.trim();
+  if (!text) return; input.value = ''; await sendReport(text);
 }
-
 async function handleImage(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+  const file = event.target.files[0]; if (!file) return;
   const reader = new FileReader();
   reader.onload = async (e) => {
-    const b64 = e.target.result.split(',')[1];
-    const user = currentUser;
-    const name = user === 'haruka' ? '晴香' : '陽一';
-    const time = getTime();
+    const b64 = e.target.result.split(',')[1]; const user = currentUser;
+    const name = user === 'haruka' ? '晴香' : '陽一'; const time = getTime();
     addAndSaveMsg({ user, role:'user', text:'食事写真を送りました 🍽️', time, imgSrc: e.target.result });
     showTyping();
     try {
       const prompt = `この食事写真について日本語で：1)推定カロリー範囲 2)栄養バランスの良い点2〜3つ 3)${name}さんの筋トレ・美容・肉体改造への応援コメント。絵文字を使って明るく4〜5文で。`;
       const reply = await callAI(prompt, { b64, type: file.type });
-      removeTyping();
-      addAndSaveMsg({ user:'ai', role:'ai', text: reply, time: getTime() });
-    } catch(e) {
-      removeTyping();
-      addAndSaveMsg({ user:'ai', role:'ai', text:'おいしそう！栄養しっかり摂れてるね💪', time: getTime() });
-    }
+      removeTyping(); addAndSaveMsg({ user:'ai', role:'ai', text: reply, time: getTime() });
+    } catch(e) { removeTyping(); addAndSaveMsg({ user:'ai', role:'ai', text:'おいしそう！栄養しっかり摂れてるね💪', time: getTime() }); }
   };
-  reader.readAsDataURL(file);
-  event.target.value = '';
+  reader.readAsDataURL(file); event.target.value = '';
 }
-
 function init() {
+  if (!checkApiKey()) return;
   loadData();
   const hadMsgs = loadMessages();
   if (!hadMsgs) {
     addDivider('今日');
-    const welcome = { user:'ai', role:'ai', text:'こんにちは！晴香さん＆陽一さん 🌟 今日もルーティーンを一緒に記録しよう！下のボタンで報告してね。食事写真は📷から送れるよ！', time: getTime() };
-    addAndSaveMsg(welcome);
+    addAndSaveMsg({ user:'ai', role:'ai', text:'こんにちは！晴香さん＆陽一さん 🌟 今日もルーティーンを一緒に記録しよう！下のボタンで報告してね。食事写真は📷から送れるよ！', time: getTime() });
   }
   renderQuickBtns();
 }
-
 init();
 </script>
 </body>
