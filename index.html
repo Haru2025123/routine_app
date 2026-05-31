@@ -5,9 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="ルーティーン部屋">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%234a9c6e'/><text y='.9em' font-size='70' x='50%25' text-anchor='middle'>💪</text></svg>">
-<link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==">
+<meta name="apple-mobile-web-app-title" content="ルーティーン部屋">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%234a9c6e'/><text y='.9em' font-size='70' x='50%25' text-anchor='middle'>💪</text></svg>">
 <title>晴香 &amp; 陽一のルーティーン部屋</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -92,7 +91,7 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, 'Hiragi
     </div>
     <div>
       <h1>晴香 &amp; 陽一のルーティーン部屋</h1>
-      <p id="syncStatus">データ読み込み中…</p>
+      <p id="syncStatus">接続中…</p>
     </div>
     <div class="sync-dot"></div>
   </div>
@@ -106,13 +105,14 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, 'Hiragi
     <div class="quick-btns" id="quickBtns"></div>
     <div class="input-row">
       <button id="imgBtn" onclick="document.getElementById('fileInput').click()">📷</button>
-      <input type="file" id="fileInput" accept="image/*" onchange="handleImage(event)">
+      <input type="file" id="fileInput" accept="image/*" capture="environment" onchange="handleImage(event)">
       <input type="text" id="textInput" placeholder="報告を入力…" onkeydown="if(event.key==='Enter')sendMessage()">
       <button id="sendBtn" onclick="sendMessage()">↑</button>
     </div>
   </div>
 </div>
 <script>
+const FIREBASE_URL = 'https://routine-app-88035-default-rtdb.asia-southeast1.firebasedatabase.app';
 const API_KEY_STORAGE = 'routine_api_key';
 function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
 function saveApiKey() {
@@ -133,34 +133,29 @@ const QUICK = {
   haruka: ["家トレ完了","ジムトレ完了","体重計測完了","プロテイン飲んだ","昨夜は酒なし","スキンケア完了","有酸素完了"],
   yoichi: ["家トレ完了","ジムトレ完了","体重計測完了","プロテイン飲んだ","昨夜は酒なし","ランニング完了","ストレッチ完了"]
 };
-const STORAGE_KEY = 'routine_data_v1';
-const MSGS_KEY = 'routine_msgs_v1';
 let currentUser = 'haruka';
-let sharedData = null;
-function defaultData() {
-  return {
-    haruka: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, skincare:0, cardio:0, streaks:{protein:0,noAlcohol:0,skincare:0}, lastDates:{} },
-    yoichi: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, running:0, stretch:0, streaks:{protein:0,noAlcohol:0}, lastDates:{} }
-  };
-}
-function loadData() {
-  try { const d = localStorage.getItem(STORAGE_KEY); sharedData = d ? JSON.parse(d) : defaultData(); } catch(e) { sharedData = defaultData(); }
-  updateStatsBar();
-  document.getElementById('syncStatus').textContent = '記録中 ✓';
-}
-function saveData() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(sharedData)); } catch(e) {} }
-function loadMessages() {
+let sharedData = { haruka: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, skincare:0, cardio:0, streaks:{protein:0,noAlcohol:0,skincare:0}, lastDates:{} }, yoichi: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, running:0, stretch:0, streaks:{protein:0,noAlcohol:0}, lastDates:{} } };
+let renderedKeys = new Set();
+async function fbGet(path) { const res = await fetch(`${FIREBASE_URL}/${path}.json`); return res.json(); }
+async function fbSet(path, data) { await fetch(`${FIREBASE_URL}/${path}.json`, { method: 'PUT', body: JSON.stringify(data) }); }
+async function fbPush(path, data) { const res = await fetch(`${FIREBASE_URL}/${path}.json`, { method: 'POST', body: JSON.stringify(data) }); return res.json(); }
+function startSync() { syncMessages(); syncStats(); setInterval(syncMessages, 3000); setInterval(syncStats, 5000); }
+async function syncMessages() {
   try {
-    const d = localStorage.getItem(MSGS_KEY);
-    if (d) { const msgs = JSON.parse(d); addDivider('今日'); msgs.slice(-40).forEach(m => renderMsg(m)); document.getElementById('messages').scrollTop = 99999; return true; }
+    const msgs = await fbGet('messages');
+    if (!msgs) return;
+    const entries = Object.entries(msgs).sort((a,b) => a[1].ts - b[1].ts);
+    entries.forEach(([key, m]) => { if (!renderedKeys.has(key)) { renderedKeys.add(key); renderMsg(m); } });
   } catch(e) {}
-  return false;
 }
-function saveMsgAppend(msgObj) {
-  try { let msgs = []; const d = localStorage.getItem(MSGS_KEY); if (d) msgs = JSON.parse(d); msgs.push(msgObj); if (msgs.length > 80) msgs = msgs.slice(-80); localStorage.setItem(MSGS_KEY, JSON.stringify(msgs)); } catch(e) {}
+async function syncStats() {
+  try {
+    const data = await fbGet('stats');
+    if (data) { sharedData = data; updateStatsBar(); }
+    document.getElementById('syncStatus').textContent = '同期中 ✓';
+  } catch(e) { document.getElementById('syncStatus').textContent = '接続エラー'; }
 }
 function getTime() { return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}); }
-function addDivider(text) { const box = document.getElementById('messages'); const d = document.createElement('div'); d.className = 'day-divider'; d.textContent = text; box.appendChild(d); }
 function renderMsg(m) {
   const box = document.getElementById('messages'); const row = document.createElement('div');
   const isMe = (m.user === currentUser); row.className = 'msg-row' + (isMe ? ' me' : '');
@@ -174,7 +169,6 @@ function renderMsg(m) {
   else { row.innerHTML = `<div class="avatar-sm ${avatarClass}">${avatarIcon}</div><div><div class="name-label">${name}</div><div class="bubble ${bubbleClass}">${m.text}${imgEl}</div></div>`; }
   box.appendChild(row); box.scrollTop = box.scrollHeight;
 }
-function addAndSaveMsg(msgObj) { renderMsg(msgObj); saveMsgAppend(msgObj); }
 function showTyping() {
   const box = document.getElementById('messages'); const d = document.createElement('div');
   d.className = 'msg-row'; d.id = 'typing-indicator';
@@ -187,15 +181,15 @@ function updateRecord(user, text) {
   if (text.includes('ジムトレ')) r.gym++;
   if (text.includes('家トレ')) r.homeGym++;
   if (text.includes('体重計測')) r.weight++;
-  if (text.includes('プロテイン')) { r.protein++; r.streaks.protein = (r.lastDates.protein === yesterday) ? (r.streaks.protein||0)+1 : 1; r.lastDates.protein = today; }
-  if (text.includes('酒なし') || text.includes('禁酒')) { r.noAlcohol++; r.streaks.noAlcohol = (r.lastDates.noAlcohol === yesterday) ? (r.streaks.noAlcohol||0)+1 : 1; r.lastDates.noAlcohol = today; }
+  if (text.includes('プロテイン')) { r.protein++; r.streaks.protein=(r.lastDates.protein===yesterday)?(r.streaks.protein||0)+1:1; r.lastDates.protein=today; }
+  if (text.includes('酒なし')||text.includes('禁酒')) { r.noAlcohol++; r.streaks.noAlcohol=(r.lastDates.noAlcohol===yesterday)?(r.streaks.noAlcohol||0)+1:1; r.lastDates.noAlcohol=today; }
   if (text.includes('スキンケア')) { r.skincare=(r.skincare||0)+1; r.streaks.skincare=(r.lastDates.skincare===yesterday)?(r.streaks.skincare||0)+1:1; r.lastDates.skincare=today; }
-  if (text.includes('有酸素') || text.includes('ランニング')) r.cardio=(r.cardio||0)+1;
+  if (text.includes('有酸素')||text.includes('ランニング')) r.cardio=(r.cardio||0)+1;
   if (text.includes('ストレッチ')) r.stretch=(r.stretch||0)+1;
-  saveData(); updateStatsBar();
+  fbSet('stats', sharedData); updateStatsBar();
 }
 function updateStatsBar() {
-  if (!sharedData) return; const h = sharedData.haruka, y = sharedData.yoichi;
+  const h = sharedData.haruka, y = sharedData.yoichi;
   document.getElementById('statsBar').innerHTML = `
     <div class="stat-chip">🌸ジム <span>${h.gym}</span>回</div>
     <div class="stat-chip">🌸禁酒 <span>${h.streaks.noAlcohol||0}</span>日連続</div>
@@ -215,25 +209,45 @@ function renderQuickBtns() {
 function buildPrompt(user, text) {
   const r = sharedData[user]; const name = user === 'haruka' ? '晴香' : '陽一';
   const ctx = user === 'haruka' ? '晴香さんはジムトレ・美容・肉体改造・禁酒に取り組む女性です。' : '陽一さんは筋トレと健康習慣に取り組んでいます。';
-  return `あなたはルーティーン管理AIコーチです。\n\n${ctx}\n累計：ジムトレ${r.gym}回、家トレ${r.homeGym}回、プロテイン${r.protein}回(連続${r.streaks?.protein||0}日)、禁酒${r.noAlcohol}日(連続${r.streaks?.noAlcohol||0}日)、体重計測${r.weight}回\n\n今回の報告：「${text}」\n\nルール：\n- ${name}さんの名前を必ず呼ぶ\n- 毎回まったく違うユニークな比喩・ユーモアを使う\n- 連続記録・累計が増えたら必ず言及\n- 3〜4文、絵文字2〜3個\n- 日本語で返答`;
+  return `あなたはルーティーン管理AIコーチです。${ctx}
+累計：ジムトレ${r.gym}回、家トレ${r.homeGym}回、プロテイン${r.protein}回(連続${r.streaks?.protein||0}日)、禁酒${r.noAlcohol}日(連続${r.streaks?.noAlcohol||0}日)、体重計測${r.weight}回
+今回の報告：「${text}」
+ルール：
+- ${name}さんの名前を必ず呼ぶ
+- 毎回まったく違うユニークな比喩・ユーモアを使う（桜、ロケット、伝説の戦士、神話、宇宙、料理、動物など何でも）
+- 連続記録・累計が増えたら必ず言及して褒める
+- 3〜4文、絵文字2〜3個
+- 日本語で返答`;
 }
-async function callAI(messages, imageData) {
+async function callAI(prompt, imageData) {
   const API_KEY = getApiKey();
-  const content = imageData ? [{ type:"image", source:{ type:"base64", media_type: imageData.type, data: imageData.b64 }}, { type:"text", text: messages }] : messages;
+  const content = imageData ? [{ type:"image", source:{ type:"base64", media_type: imageData.type, data: imageData.b64 }}, { type:"text", text: prompt }] : prompt;
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
     body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, messages: [{ role: "user", content }] })
   });
   const data = await res.json();
-  return data.content?.[0]?.text || "素晴らしい！記録したよ💪";
+  return data.content?.[0]?.text || "素晴らしい！続けてね💪";
 }
 async function sendReport(text) {
   const user = currentUser; const time = getTime();
-  addAndSaveMsg({ user, role:'user', text, time });
+  const msgObj = { user, role:'user', text, time, ts: Date.now() };
+  const ref = await fbPush('messages', msgObj);
+  renderedKeys.add(ref.name); renderMsg(msgObj);
   updateRecord(user, text); showTyping();
-  try { const reply = await callAI(buildPrompt(user, text)); removeTyping(); addAndSaveMsg({ user:'ai', role:'ai', text: reply, time: getTime() }); }
-  catch(e) { removeTyping(); addAndSaveMsg({ user:'ai', role:'ai', text:'報告ありがとう！記録したよ！💪', time: getTime() }); }
+  try {
+    const reply = await callAI(buildPrompt(user, text));
+    removeTyping();
+    const aiMsg = { user:'ai', role:'ai', text: reply, time: getTime(), ts: Date.now() };
+    const aiRef = await fbPush('messages', aiMsg);
+    renderedKeys.add(aiRef.name); renderMsg(aiMsg);
+  } catch(e) {
+    removeTyping();
+    const aiMsg = { user:'ai', role:'ai', text:'報告ありがとう！記録したよ！💪', time: getTime(), ts: Date.now() };
+    const aiRef = await fbPush('messages', aiMsg);
+    renderedKeys.add(aiRef.name); renderMsg(aiMsg);
+  }
 }
 async function sendMessage() {
   const input = document.getElementById('textInput'); const text = input.value.trim();
@@ -245,25 +259,36 @@ async function handleImage(event) {
   reader.onload = async (e) => {
     const b64 = e.target.result.split(',')[1]; const user = currentUser;
     const name = user === 'haruka' ? '晴香' : '陽一'; const time = getTime();
-    addAndSaveMsg({ user, role:'user', text:'食事写真を送りました 🍽️', time, imgSrc: e.target.result });
-    showTyping();
+    const msgObj = { user, role:'user', text:'食事写真を送りました 🍽️', time, imgSrc: e.target.result, ts: Date.now() };
+    const ref = await fbPush('messages', msgObj);
+    renderedKeys.add(ref.name); renderMsg(msgObj); showTyping();
     try {
-      const prompt = `この食事写真について日本語で：1)推定カロリー範囲 2)栄養バランスの良い点2〜3つ 3)${name}さんの筋トレ・美容・肉体改造への応援コメント。絵文字を使って明るく4〜5文で。`;
+      const prompt = `この食事写真を詳しく分析して日本語で：1)写っている料理名と推定カロリー範囲 2)この食事の栄養バランスの良い点2〜3つ 3)${name}さんの筋トレ・美容・肉体改造への具体的な応援コメント。毎回違う表現で、絵文字を使って明るく4〜5文で。`;
       const reply = await callAI(prompt, { b64, type: file.type });
-      removeTyping(); addAndSaveMsg({ user:'ai', role:'ai', text: reply, time: getTime() });
-    } catch(e) { removeTyping(); addAndSaveMsg({ user:'ai', role:'ai', text:'おいしそう！栄養しっかり摂れてるね💪', time: getTime() }); }
+      removeTyping();
+      const aiMsg = { user:'ai', role:'ai', text: reply, time: getTime(), ts: Date.now() };
+      const aiRef = await fbPush('messages', aiMsg);
+      renderedKeys.add(aiRef.name); renderMsg(aiMsg);
+    } catch(e) {
+      removeTyping();
+      const aiMsg = { user:'ai', role:'ai', text:'おいしそう！栄養しっかり摂れてるね💪', time: getTime(), ts: Date.now() };
+      const aiRef = await fbPush('messages', aiMsg);
+      renderedKeys.add(aiRef.name); renderMsg(aiMsg);
+    }
   };
   reader.readAsDataURL(file); event.target.value = '';
 }
-function init() {
+async function init() {
   if (!checkApiKey()) return;
-  loadData();
-  const hadMsgs = loadMessages();
-  if (!hadMsgs) {
-    addDivider('今日');
-    addAndSaveMsg({ user:'ai', role:'ai', text:'こんにちは！晴香さん＆陽一さん 🌟 今日もルーティーンを一緒に記録しよう！下のボタンで報告してね。食事写真は📷から送れるよ！', time: getTime() });
+  renderQuickBtns(); updateStatsBar();
+  await syncMessages();
+  const msgs = await fbGet('messages');
+  if (!msgs) {
+    const welcome = { user:'ai', role:'ai', text:'こんにちは！晴香さん＆陽一さん 🌟 今日もルーティーンを一緒に記録しよう！下のボタンで報告してね。食事写真は📷から送れるよ！', time: getTime(), ts: Date.now() };
+    const ref = await fbPush('messages', welcome);
+    renderedKeys.add(ref.name); renderMsg(welcome);
   }
-  renderQuickBtns();
+  startSync();
 }
 init();
 </script>
