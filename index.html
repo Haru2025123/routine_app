@@ -136,18 +136,59 @@ const QUICK = {
 let currentUser = 'haruka';
 let sharedData = { haruka: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, skincare:0, cardio:0, streaks:{protein:0,noAlcohol:0,skincare:0}, lastDates:{} }, yoichi: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, running:0, stretch:0, streaks:{protein:0,noAlcohol:0}, lastDates:{} } };
 let renderedKeys = new Set();
+let swRegistration = null;
+
+// ======== Service Worker & 通知 ========
+async function initNotifications() {
+  if (!('serviceWorker' in navigator) || !('Notification' in window)) return;
+  try {
+    swRegistration = await navigator.serviceWorker.register('/routine_app/sw.js');
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      console.log('通知許可済み');
+    }
+  } catch(e) { console.log('SW登録失敗:', e); }
+}
+
+function showLocalNotification(title, body) {
+  if (Notification.permission !== 'granted') return;
+  if (document.visibilityState === 'visible') return; // アプリ開いてる時は通知しない
+  if (swRegistration) {
+    swRegistration.showNotification(title, {
+      body: body,
+      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="%234a9c6e"/><text y=".9em" font-size="70" x="50%25" text-anchor="middle">💪</text></svg>',
+      vibrate: [200, 100, 200],
+      tag: 'routine-msg'
+    });
+  }
+}
+
+// ======== Firebase ========
 async function fbGet(path) { const res = await fetch(`${FIREBASE_URL}/${path}.json`); return res.json(); }
 async function fbSet(path, data) { await fetch(`${FIREBASE_URL}/${path}.json`, { method: 'PUT', body: JSON.stringify(data) }); }
 async function fbPush(path, data) { const res = await fetch(`${FIREBASE_URL}/${path}.json`, { method: 'POST', body: JSON.stringify(data) }); return res.json(); }
+
 function startSync() { syncMessages(); syncStats(); setInterval(syncMessages, 3000); setInterval(syncStats, 5000); }
+
 async function syncMessages() {
   try {
     const msgs = await fbGet('messages');
     if (!msgs) return;
     const entries = Object.entries(msgs).sort((a,b) => a[1].ts - b[1].ts);
-    entries.forEach(([key, m]) => { if (!renderedKeys.has(key)) { renderedKeys.add(key); renderMsg(m); } });
+    entries.forEach(([key, m]) => {
+      if (!renderedKeys.has(key)) {
+        renderedKeys.add(key);
+        renderMsg(m);
+        // 相手のメッセージが来たら通知
+        if (m.user !== currentUser && m.role !== 'ai' && m.ts > (Date.now() - 10000)) {
+          const name = m.user === 'haruka' ? '🌸 晴香' : '🏋️ 陽一';
+          showLocalNotification('ルーティーン部屋', `${name}：${m.text}`);
+        }
+      }
+    });
   } catch(e) {}
 }
+
 async function syncStats() {
   try {
     const data = await fbGet('stats');
@@ -155,7 +196,9 @@ async function syncStats() {
     document.getElementById('syncStatus').textContent = '同期中 ✓';
   } catch(e) { document.getElementById('syncStatus').textContent = '接続エラー'; }
 }
+
 function getTime() { return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}); }
+
 function renderMsg(m) {
   const box = document.getElementById('messages'); const row = document.createElement('div');
   const isMe = (m.user === currentUser); row.className = 'msg-row' + (isMe ? ' me' : '');
@@ -280,6 +323,7 @@ async function handleImage(event) {
 }
 async function init() {
   if (!checkApiKey()) return;
+  await initNotifications();
   renderQuickBtns(); updateStatsBar();
   await syncMessages();
   const msgs = await fbGet('messages');
