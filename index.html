@@ -104,8 +104,7 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, 'Hiragi
     <div id="statsBar"></div>
     <div class="quick-btns" id="quickBtns"></div>
     <div class="input-row">
-      <button id="imgBtn" onclick="document.getElementById('fileInput').click()">🖼️</button>
-<button id="camBtn" onclick="document.getElementById('cameraInput').click()">📷</button>
+     <button id="imgBtn" onclick="showImageMenu()">📷</button>
 <input type="file" id="fileInput" accept="image/*" onchange="handleImage(event)">
 <input type="file" id="cameraInput" accept="image/*" capture="environment" onchange="handleImage(event)">
       <input type="text" id="textInput" placeholder="報告を入力…" onkeydown="if(event.key==='Enter')sendMessage()">
@@ -364,6 +363,13 @@ async function init() {
   startSync();
 }
 init();
+  function showImageMenu() {
+  if (confirm('📷 カメラで撮影しますか？\n\nOK → カメラ起動\nキャンセル → 写真を選択')) {
+    document.getElementById('cameraInput').click();
+  } else {
+    document.getElementById('fileInput').click();
+  }
+}
 </script>
 </body>
 </html>
