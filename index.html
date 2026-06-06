@@ -275,7 +275,7 @@ async function callAI(prompt, imageData) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": API_KEY, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, messages: [{ role: "user", content }] })
+    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 2000, messages: [{ role: "user", content }] })
   });
   const data = await res.json();
   return data.content?.[0]?.text || "最高です！続けてね💪";
@@ -326,13 +326,18 @@ async function handleImage(event) {
     const ref = await fbPush('messages', msgObj);
     renderedKeys.add(ref.name); checkAndInsertDivider(ts); renderMsg(msgObj); showTyping();
     try {
-      const prompt = `この食事写真を詳しく分析して、${name}さんへのメッセージを日本語で書いてください。
-以下の内容を必ず含めてください：
-1.【料理名と推定カロリー】写っている料理を具体的に特定して推定カロリーを教える
-2.【食材の栄養解説】写っている主な食材（野菜・肉・魚・卵など）それぞれの栄養素と、トレーニング・ダイエット・美容への具体的な効果
-3.【このタイミングで食べる意味】筋トレや美容の観点からこの食事がどう役立つか
-4.【ポジティブな応援メッセージ】毎回違う表現でモチベーションが上がる言葉
-絵文字を使って明るく6〜8文で。毎回違う切り口で分析してください。`;
+const prompt = `あなたは栄養学とトレーニングの専門家AIコーチです。この食事写真を見て、${name}さんへ以下を必ず全部含めた詳しいメッセージを日本語で書いてください。
+
+【絶対に守るルール】
+- 短文・一言コメントは禁止。必ず長文で詳しく書く
+- 写真に写っている料理名を具体的に特定する
+- 写っている食材（肉・魚・野菜・豆腐など）を一つひとつ取り上げて、それぞれの栄養素・健康効果・トレーニングやダイエットへの具体的なメリットを詳しく説明する
+- 美容・肌・ボディメイクへの効果も具体的に書く
+- 推定カロリーを教える
+- 毎回まったく違う切り口・表現で書く
+- 最後にモチベーションが上がる熱い応援メッセージで締める
+- 絵文字を5個以上使う
+- 最低でも10文以上書く`;
       const reply = await callAI(prompt, { b64, type: file.type });
       removeTyping();
       const aiTs = Date.now();
