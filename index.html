@@ -28,14 +28,14 @@ html, body { height: 100%; overflow: hidden; font-family: -apple-system, 'Hiragi
 .avatar-sm.yoichi { background: #aed6f1; }
 .avatar-sm.ai { background: #4a9c6e; color: white; font-size: 11px; font-weight: 700; }
 .name-label { font-size: 11px; color: #555; margin-bottom: 2px; margin-left: 2px; }
-.bubble { max-width: 230px; padding: 9px 12px; border-radius: 18px; font-size: 13.5px; line-height: 1.55; word-break: break-word; }
+.bubble { max-width: 240px; padding: 9px 12px; border-radius: 18px; font-size: 13.5px; line-height: 1.55; word-break: break-word; }
 .bubble.sent-h { background: #ff8fab; color: white; border-bottom-right-radius: 4px; }
 .bubble.sent-y { background: #4a9c6e; color: white; border-bottom-right-radius: 4px; }
 .bubble.received { background: white; color: #1a1a1a; border-bottom-left-radius: 4px; }
-.bubble.ai-bubble { background: #e8f7ee; color: #1a3a2a; border-bottom-left-radius: 4px; max-width: 250px; }
+.bubble.ai-bubble { background: #e8f7ee; color: #1a3a2a; border-bottom-left-radius: 4px; max-width: 260px; }
 .bubble img { max-width: 100%; border-radius: 10px; margin-top: 6px; display: block; }
 .time-stamp { font-size: 10px; color: #555; align-self: flex-end; margin-bottom: 2px; flex-shrink: 0; }
-.day-divider { text-align: center; font-size: 11px; color: #444; background: rgba(255,255,255,0.45); border-radius: 10px; padding: 3px 12px; align-self: center; margin: 6px 0; }
+.day-divider { text-align: center; font-size: 11px; color: #444; background: rgba(255,255,255,0.55); border-radius: 10px; padding: 3px 14px; align-self: center; margin: 8px 0; font-weight: 600; }
 .typing { display: flex; gap: 4px; padding: 10px 14px; }
 .typing span { width: 7px; height: 7px; background: #999; border-radius: 50%; animation: bounce 1.2s infinite; }
 .typing span:nth-child(2) { animation-delay: 0.2s; }
@@ -134,61 +134,43 @@ const QUICK = {
   yoichi: ["家トレ完了","ジムトレ完了","体重計測完了","プロテイン飲んだ","昨夜は酒なし","ランニング完了","ストレッチ完了"]
 };
 let currentUser = 'haruka';
-let sharedData = { haruka: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, skincare:0, cardio:0, streaks:{protein:0,noAlcohol:0,skincare:0}, lastDates:{} }, yoichi: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, running:0, stretch:0, streaks:{protein:0,noAlcohol:0}, lastDates:{} } };
+let sharedData = {
+  haruka: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, skincare:0, cardio:0, streaks:{protein:0,noAlcohol:0,skincare:0}, lastDates:{} },
+  yoichi: { gym:0, homeGym:0, protein:0, noAlcohol:0, weight:0, running:0, stretch:0, streaks:{protein:0,noAlcohol:0}, lastDates:{} }
+};
 let renderedKeys = new Set();
-let swRegistration = null;
+let pendingReports = [];
+let batchTimer = null;
+const BATCH_WINDOW = 10000;
+let lastDisplayedDate = '';
 
-// ======== Service Worker & 通知 ========
-async function initNotifications() {
-  if (!('serviceWorker' in navigator) || !('Notification' in window)) return;
-  try {
-    swRegistration = await navigator.serviceWorker.register('/routine_app/sw.js');
-    const permission = await Notification.requestPermission();
-    if (permission === 'granted') {
-      console.log('通知許可済み');
-    }
-  } catch(e) { console.log('SW登録失敗:', e); }
+function getDateStr(ts) {
+  const d = new Date(ts || Date.now());
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return '今日';
+  if (d.toDateString() === yesterday.toDateString()) return '昨日';
+  return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
 }
-
-function showLocalNotification(title, body) {
-  if (Notification.permission !== 'granted') return;
-  if (document.visibilityState === 'visible') return; // アプリ開いてる時は通知しない
-  if (swRegistration) {
-    swRegistration.showNotification(title, {
-      body: body,
-      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="%234a9c6e"/><text y=".9em" font-size="70" x="50%25" text-anchor="middle">💪</text></svg>',
-      vibrate: [200, 100, 200],
-      tag: 'routine-msg'
-    });
-  }
+function checkAndInsertDivider(ts) {
+  const dateStr = getDateStr(ts);
+  if (dateStr !== lastDisplayedDate) { lastDisplayedDate = dateStr; addDivider(dateStr); }
 }
-
-// ======== Firebase ========
 async function fbGet(path) { const res = await fetch(`${FIREBASE_URL}/${path}.json`); return res.json(); }
 async function fbSet(path, data) { await fetch(`${FIREBASE_URL}/${path}.json`, { method: 'PUT', body: JSON.stringify(data) }); }
 async function fbPush(path, data) { const res = await fetch(`${FIREBASE_URL}/${path}.json`, { method: 'POST', body: JSON.stringify(data) }); return res.json(); }
-
 function startSync() { syncMessages(); syncStats(); setInterval(syncMessages, 3000); setInterval(syncStats, 5000); }
-
 async function syncMessages() {
   try {
     const msgs = await fbGet('messages');
     if (!msgs) return;
     const entries = Object.entries(msgs).sort((a,b) => a[1].ts - b[1].ts);
     entries.forEach(([key, m]) => {
-      if (!renderedKeys.has(key)) {
-        renderedKeys.add(key);
-        renderMsg(m);
-        // 相手のメッセージが来たら通知
-        if (m.user !== currentUser && m.role !== 'ai' && m.ts > (Date.now() - 10000)) {
-          const name = m.user === 'haruka' ? '🌸 晴香' : '🏋️ 陽一';
-          showLocalNotification('ルーティーン部屋', `${name}：${m.text}`);
-        }
-      }
+      if (!renderedKeys.has(key)) { renderedKeys.add(key); checkAndInsertDivider(m.ts); renderMsg(m); }
     });
   } catch(e) {}
 }
-
 async function syncStats() {
   try {
     const data = await fbGet('stats');
@@ -196,9 +178,14 @@ async function syncStats() {
     document.getElementById('syncStatus').textContent = '同期中 ✓';
   } catch(e) { document.getElementById('syncStatus').textContent = '接続エラー'; }
 }
-
-function getTime() { return new Date().toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}); }
-
+function getTime(ts) { return new Date(ts || Date.now()).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'}); }
+function addDivider(text) {
+  const box = document.getElementById('messages');
+  const d = document.createElement('div');
+  d.className = 'day-divider';
+  d.textContent = `── ${text} ──`;
+  box.appendChild(d);
+}
 function renderMsg(m) {
   const box = document.getElementById('messages'); const row = document.createElement('div');
   const isMe = (m.user === currentUser); row.className = 'msg-row' + (isMe ? ' me' : '');
@@ -208,8 +195,8 @@ function renderMsg(m) {
   const avatarIcon = m.role === 'ai' ? 'AI' : (m.user === 'haruka' ? '🌸' : '🏋️');
   const name = m.role === 'ai' ? 'AIコーチ' : (m.user === 'haruka' ? '晴香' : '陽一');
   const imgEl = m.imgSrc ? `<img src="${m.imgSrc}" loading="lazy">` : '';
-  if (isMe) { row.innerHTML = `<div class="time-stamp">${m.time}</div><div class="bubble ${bubbleClass}">${m.text}${imgEl}</div>`; }
-  else { row.innerHTML = `<div class="avatar-sm ${avatarClass}">${avatarIcon}</div><div><div class="name-label">${name}</div><div class="bubble ${bubbleClass}">${m.text}${imgEl}</div></div>`; }
+  if (isMe) { row.innerHTML = `<div class="time-stamp">${getTime(m.ts)}</div><div class="bubble ${bubbleClass}">${m.text}${imgEl}</div>`; }
+  else { row.innerHTML = `<div class="avatar-sm ${avatarClass}">${avatarIcon}</div><div><div class="name-label">${name}</div><div class="bubble ${bubbleClass}">${m.text}${imgEl}</div></div><div class="time-stamp">${getTime(m.ts)}</div>`; }
   box.appendChild(row); box.scrollTop = box.scrollHeight;
 }
 function showTyping() {
@@ -249,18 +236,37 @@ function setUser(u) {
 function renderQuickBtns() {
   document.getElementById('quickBtns').innerHTML = QUICK[currentUser].map(b => `<button class="qbtn" onclick="sendReport('${b}')">${b}</button>`).join('');
 }
-function buildPrompt(user, text) {
+function buildSinglePrompt(user, text) {
   const r = sharedData[user]; const name = user === 'haruka' ? '晴香' : '陽一';
   const ctx = user === 'haruka' ? '晴香さんはジムトレ・美容・肉体改造・禁酒に取り組む女性です。' : '陽一さんは筋トレと健康習慣に取り組んでいます。';
-  return `あなたはルーティーン管理AIコーチです。${ctx}
-累計：ジムトレ${r.gym}回、家トレ${r.homeGym}回、プロテイン${r.protein}回(連続${r.streaks?.protein||0}日)、禁酒${r.noAlcohol}日(連続${r.streaks?.noAlcohol||0}日)、体重計測${r.weight}回
+  return `あなたはトレーニング・美容・ダイエットの専門知識を持つ熱血AIコーチです。
+${ctx}
+累計記録：ジムトレ${r.gym}回、家トレ${r.homeGym}回、プロテイン${r.protein}回(連続${r.streaks?.protein||0}日)、禁酒${r.noAlcohol}日(連続${r.streaks?.noAlcohol||0}日)、体重計測${r.weight}回
 今回の報告：「${text}」
 ルール：
 - ${name}さんの名前を必ず呼ぶ
-- 毎回まったく違うユニークな比喩・ユーモアを使う（桜、ロケット、伝説の戦士、神話、宇宙、料理、動物など何でも）
-- 連続記録・累計が増えたら必ず言及して褒める
-- 3〜4文、絵文字2〜3個
-- 日本語で返答`;
+- 毎回まったく違うユニークな比喩・ユーモアを使う（桜、ロケット、伝説の戦士、神話、宇宙、料理、動物、映画など）
+- 連続記録・累計が増えたら具体的な数字を出して大げさに褒める
+- トレーニングやダイエットに役立つ具体的なアドバイスや豆知識を1つ入れる
+- 3〜4文、絵文字2〜3個、日本語で返答`;
+}
+function buildBatchPrompt(user, reports) {
+  const r = sharedData[user]; const name = user === 'haruka' ? '晴香' : '陽一';
+  const ctx = user === 'haruka' ? '晴香さんはジムトレ・美容・肉体改造・禁酒に取り組む女性です。' : '陽一さんは筋トレと健康習慣に取り組んでいます。';
+  const reportList = reports.map((r,i) => `${i+1}. ${r}`).join('\n');
+  return `あなたはトレーニング・美容・ダイエットの専門知識を持つ熱血AIコーチです。
+${ctx}
+累計記録：ジムトレ${r.gym}回、家トレ${r.homeGym}回、プロテイン${r.protein}回(連続${r.streaks?.protein||0}日)、禁酒${r.noAlcohol}日(連続${r.streaks?.noAlcohol||0}日)、体重計測${r.weight}回
+今回まとめての報告：
+${reportList}
+ルール：
+- ${name}さんの名前を必ず呼ぶ
+- 全ての報告をまとめて一つの長めのメッセージで返答
+- 毎回まったく違うユニークな比喩・ユーモアで盛り上げる
+- 各報告に対してトレーニング・ダイエット・美容の豆知識やアドバイスを入れる
+- 連続記録があれば具体的な数字を出して特別に褒める
+- モチベーションが爆上がりするような熱いメッセージにする
+- 5〜8文、絵文字3〜5個、日本語で返答`;
 }
 async function callAI(prompt, imageData) {
   const API_KEY = getApiKey();
@@ -271,23 +277,36 @@ async function callAI(prompt, imageData) {
     body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1000, messages: [{ role: "user", content }] })
   });
   const data = await res.json();
-  return data.content?.[0]?.text || "素晴らしい！続けてね💪";
+  return data.content?.[0]?.text || "最高です！続けてね💪";
 }
 async function sendReport(text) {
-  const user = currentUser; const time = getTime();
-  const msgObj = { user, role:'user', text, time, ts: Date.now() };
+  const user = currentUser; const ts = Date.now();
+  const msgObj = { user, role:'user', text, time: getTime(ts), ts };
   const ref = await fbPush('messages', msgObj);
-  renderedKeys.add(ref.name); renderMsg(msgObj);
-  updateRecord(user, text); showTyping();
+  renderedKeys.add(ref.name); checkAndInsertDivider(ts); renderMsg(msgObj);
+  updateRecord(user, text);
+  pendingReports.push({ user, text });
+  if (batchTimer) clearTimeout(batchTimer);
+  batchTimer = setTimeout(() => processBatch(user), BATCH_WINDOW);
+}
+async function processBatch(user) {
+  if (pendingReports.length === 0) return;
+  const reports = [...pendingReports];
+  pendingReports = []; batchTimer = null;
+  showTyping();
   try {
-    const reply = await callAI(buildPrompt(user, text));
+    const reply = reports.length === 1
+      ? await callAI(buildSinglePrompt(user, reports[0].text))
+      : await callAI(buildBatchPrompt(user, reports.map(r => r.text)));
     removeTyping();
-    const aiMsg = { user:'ai', role:'ai', text: reply, time: getTime(), ts: Date.now() };
+    const ts = Date.now();
+    const aiMsg = { user:'ai', role:'ai', text: reply, time: getTime(ts), ts };
     const aiRef = await fbPush('messages', aiMsg);
-    renderedKeys.add(aiRef.name); renderMsg(aiMsg);
+    renderedKeys.add(aiRef.name); checkAndInsertDivider(ts); renderMsg(aiMsg);
   } catch(e) {
     removeTyping();
-    const aiMsg = { user:'ai', role:'ai', text:'報告ありがとう！記録したよ！💪', time: getTime(), ts: Date.now() };
+    const ts = Date.now();
+    const aiMsg = { user:'ai', role:'ai', text:'報告ありがとう！全部記録したよ💪 今日も最高だね！', time: getTime(ts), ts };
     const aiRef = await fbPush('messages', aiMsg);
     renderedKeys.add(aiRef.name); renderMsg(aiMsg);
   }
@@ -301,20 +320,28 @@ async function handleImage(event) {
   const reader = new FileReader();
   reader.onload = async (e) => {
     const b64 = e.target.result.split(',')[1]; const user = currentUser;
-    const name = user === 'haruka' ? '晴香' : '陽一'; const time = getTime();
-    const msgObj = { user, role:'user', text:'食事写真を送りました 🍽️', time, imgSrc: e.target.result, ts: Date.now() };
+    const name = user === 'haruka' ? '晴香' : '陽一'; const ts = Date.now();
+    const msgObj = { user, role:'user', text:'食事写真を送りました 🍽️', time: getTime(ts), imgSrc: e.target.result, ts };
     const ref = await fbPush('messages', msgObj);
-    renderedKeys.add(ref.name); renderMsg(msgObj); showTyping();
+    renderedKeys.add(ref.name); checkAndInsertDivider(ts); renderMsg(msgObj); showTyping();
     try {
-      const prompt = `この食事写真を詳しく分析して日本語で：1)写っている料理名と推定カロリー範囲 2)この食事の栄養バランスの良い点2〜3つ 3)${name}さんの筋トレ・美容・肉体改造への具体的な応援コメント。毎回違う表現で、絵文字を使って明るく4〜5文で。`;
+      const prompt = `この食事写真を詳しく分析して、${name}さんへのメッセージを日本語で書いてください。
+以下の内容を必ず含めてください：
+1.【料理名と推定カロリー】写っている料理を具体的に特定して推定カロリーを教える
+2.【食材の栄養解説】写っている主な食材（野菜・肉・魚・卵など）それぞれの栄養素と、トレーニング・ダイエット・美容への具体的な効果
+3.【このタイミングで食べる意味】筋トレや美容の観点からこの食事がどう役立つか
+4.【ポジティブな応援メッセージ】毎回違う表現でモチベーションが上がる言葉
+絵文字を使って明るく6〜8文で。毎回違う切り口で分析してください。`;
       const reply = await callAI(prompt, { b64, type: file.type });
       removeTyping();
-      const aiMsg = { user:'ai', role:'ai', text: reply, time: getTime(), ts: Date.now() };
+      const aiTs = Date.now();
+      const aiMsg = { user:'ai', role:'ai', text: reply, time: getTime(aiTs), ts: aiTs };
       const aiRef = await fbPush('messages', aiMsg);
-      renderedKeys.add(aiRef.name); renderMsg(aiMsg);
+      renderedKeys.add(aiRef.name); checkAndInsertDivider(aiTs); renderMsg(aiMsg);
     } catch(e) {
       removeTyping();
-      const aiMsg = { user:'ai', role:'ai', text:'おいしそう！栄養しっかり摂れてるね💪', time: getTime(), ts: Date.now() };
+      const aiTs = Date.now();
+      const aiMsg = { user:'ai', role:'ai', text:'おいしそう！栄養たっぷりで筋トレにぴったりだね💪✨', time: getTime(aiTs), ts: aiTs };
       const aiRef = await fbPush('messages', aiMsg);
       renderedKeys.add(aiRef.name); renderMsg(aiMsg);
     }
@@ -323,14 +350,14 @@ async function handleImage(event) {
 }
 async function init() {
   if (!checkApiKey()) return;
-  await initNotifications();
   renderQuickBtns(); updateStatsBar();
   await syncMessages();
   const msgs = await fbGet('messages');
   if (!msgs) {
-    const welcome = { user:'ai', role:'ai', text:'こんにちは！晴香さん＆陽一さん 🌟 今日もルーティーンを一緒に記録しよう！下のボタンで報告してね。食事写真は📷から送れるよ！', time: getTime(), ts: Date.now() };
+    const ts = Date.now();
+    const welcome = { user:'ai', role:'ai', text:'こんにちは！晴香さん＆陽一さん 🌟 今日もルーティーンを一緒に記録しよう！下のボタンで報告してね。食事写真は📷から送れるよ！', time: getTime(ts), ts };
     const ref = await fbPush('messages', welcome);
-    renderedKeys.add(ref.name); renderMsg(welcome);
+    renderedKeys.add(ref.name); checkAndInsertDivider(ts); renderMsg(welcome);
   }
   startSync();
 }
